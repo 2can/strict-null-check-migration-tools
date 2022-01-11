@@ -10,12 +10,19 @@ export function getImportsForFile(file: string, srcRoot: string) {
   file = fs.realpathSync(file)
 
   if (fs.lstatSync(file).isDirectory()) {
-    const index = path.join(file, "index.ts")
-    if (fs.existsSync(index)) {
+    const indexTs = path.join(file, "index.ts")
+    if (fs.existsSync(indexTs)) {
       // https://basarat.gitbooks.io/typescript/docs/tips/barrel.html
       console.warn(`Warning: Barrel import: ${path.relative(srcRoot, file)}`)
-      file = index
-    } else {
+      file = indexTs
+    }
+
+    const indexTsx = path.join(file, "index.tsx")
+    if (fs.existsSync(indexTsx)) {
+      file = indexTsx
+    }
+
+    if (!fs.existsSync(indexTs) && !fs.existsSync(indexTsx)) {
       throw new Error(`Warning: Importing a directory without an index.ts file: ${path.relative(srcRoot, file)}`)
     }
   }
@@ -23,16 +30,47 @@ export function getImportsForFile(file: string, srcRoot: string) {
   const fileInfo = ts.preProcessFile(fs.readFileSync(file).toString());
   return fileInfo.importedFiles
     .map(importedFile => importedFile.fileName)
-    // remove svg, css imports
+    // remove svg, css, png imports
     .filter(fileName => !fileName.endsWith(".css") && !fileName.endsWith(".svg") && !fileName.endsWith(".json"))
+    .filter(fileName => !fileName.endsWith(".png") && !fileName.endsWith(".jpg"))
     .filter(fileName => !fileName.endsWith(".js") && !fileName.endsWith(".jsx")) // Assume .js/.jsx imports have a .d.ts available
     .filter(x => /\//.test(x)) // remove node modules (the import must contain '/')
+    .filter(x => !x.includes("lodash"))
     .map(fileName => {
+      if (fileName.includes("@saleor/app-bridge")) {
+        return fileName
+      }
+      if (fileName.includes("@saleor/macaw-ui")) {
+        return fileName
+      }
+      if (fileName.includes("@saleor/sdk")) {
+        return fileName
+      }
+      if (fileName.includes("@saleor")) {
+        return fileName.replace("@saleor", "")
+      }
+
+      return fileName
+    })
+    .map(fileName => {
+      if (fileName.includes("@assets/")) {
+        return path.join(srcRoot, fileName.replace("@assets", "../assets"))
+      }
+      if (fileName.includes("@locale/")) {
+        return path.join(srcRoot, fileName.replace("@locale", "../locale"))
+      }
+      if (fileName.includes("@test/")) {
+        return path.join(srcRoot, fileName.replace("@test", "../testUtils"))
+      }
+
       if (/(^\.\/)|(^\.\.\/)/.test(fileName)) {
         return path.join(path.dirname(file), fileName)
       }
+
       return path.join(srcRoot, fileName);
-    }).map(fileName => {
+    })
+    .filter(x => !(/@/.test(x)))
+    .map(fileName => {
       if (fs.existsSync(`${fileName}.ts`)) {
         return `${fileName}.ts`
       }
@@ -46,7 +84,8 @@ export function getImportsForFile(file: string, srcRoot: string) {
         return fileName
       }
       console.warn(`Warning: Unresolved import ${path.relative(srcRoot, fileName)} ` +
-                   `in ${path.relative(srcRoot, file)}`)
+        `in ${path.relative(srcRoot, file)}`)
+
       return null
     }).filter(fileName => !!fileName)
 }
@@ -57,7 +96,7 @@ export function getImportsForFile(file: string, srcRoot: string) {
 export class ImportTracker {
   private imports = new Map<string, string[]>()
 
-  constructor(private srcRoot: string) {}
+  constructor(private srcRoot: string) { }
 
   public getImports(file: string): string[] {
     if (this.imports.has(file)) {
